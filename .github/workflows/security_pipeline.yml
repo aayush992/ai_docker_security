@@ -45,7 +45,7 @@ jobs:
           syft "${{ steps.image.outputs.image_ref }}" -o cyclonedx-json=sbom.json
 
       - name: Run Trivy image scan (vulnerabilities)
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: image
           image-ref: ${{ steps.image.outputs.image_ref }}
@@ -56,7 +56,7 @@ jobs:
           exit-code: 0
 
       - name: Run Trivy filesystem scan (secrets)
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: fs
           scan-ref: .
