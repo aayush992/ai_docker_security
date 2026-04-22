@@ -55,7 +55,7 @@ jobs:
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           exit-code: 0
 
-            - name: Run Trivy image scan (vulnerabilities)
+      - name: Run Trivy image scan (vulnerabilities)
         uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: image
