@@ -55,16 +55,17 @@ jobs:
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           exit-code: 0
 
-      - name: Run Trivy filesystem scan (secrets)
+            - name: Run Trivy image scan (vulnerabilities)
         uses: aquasecurity/trivy-action@v0.35.0
         with:
-          scan-type: fs
-          scan-ref: .
+          scan-type: image
+          image-ref: ${{ steps.image.outputs.image_ref }}
           format: json
-          output: trivy-secrets.json
-          scanners: secret
+          output: trivy.json
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: true
           exit-code: 0
-          skip-setup-trivy: true
 
       - name: Show scan files
         run: |
