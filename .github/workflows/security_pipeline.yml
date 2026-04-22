@@ -1,0 +1,131 @@
+name: AI Docker Image Security Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}/hello-secure-app
+
+jobs:
+  secure-build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      id-token: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set lowercase image ref
+        id: image
+        shell: bash
+        run: |
+          IMAGE_REF=$(echo "${IMAGE_NAME}:${GITHUB_SHA}" | tr '[:upper:]' '[:lower:]')
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Docker image
+        run: docker build -t "${{ steps.image.outputs.image_ref }}" .
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate SBOM with Syft (CycloneDX JSON)
+        run: |
+          syft "${{ steps.image.outputs.image_ref }}" -o cyclonedx-json=sbom.json
+
+      - name: Run Trivy image scan (vulnerabilities)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: image
+          image-ref: ${{ steps.image.outputs.image_ref }}
+          format: json
+          output: trivy.json
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: 0
+
+      - name: Run Trivy filesystem scan (secrets)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: trivy-secrets.json
+          scanners: secret
+          exit-code: 0
+          skip-setup-trivy: true
+
+      - name: Show scan files
+        run: |
+          ls -lah
+          test -f sbom.json
+          test -f trivy.json
+          test -f trivy-secrets.json
+
+      - name: Run risk scorer
+        run: python scripts/risk_scorer.py
+
+      - name: Install Conftest
+        shell: bash
+        run: |
+          CONFTEST_VERSION=0.59.0
+          curl -L "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" -o conftest.tar.gz
+          tar -xzf conftest.tar.gz
+          sudo mv conftest /usr/local/bin/conftest
+          conftest --version
+
+      - name: Policy check - Dockerfile
+        run: conftest test Dockerfile --policy policy
+
+      - name: Policy check - Trivy vulnerabilities
+        run: conftest test trivy.json --policy policy
+
+      - name: Policy check - Risk score
+        run: conftest test risk.json --policy policy
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image to GHCR
+        if: github.event_name != 'pull_request'
+        run: docker push "${{ steps.image.outputs.image_ref }}"
+
+      - name: Install Cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image with Cosign keyless
+        if: github.event_name != 'pull_request'
+        env:
+          COSIGN_EXPERIMENTAL: "false"
+        run: cosign sign --yes "${{ steps.image.outputs.image_ref }}"
+
+      - name: Attach SBOM as Cosign attestation
+        if: github.event_name != 'pull_request'
+        run: cosign attest --yes --predicate sbom.json --type cyclonedx "${{ steps.image.outputs.image_ref }}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-artifacts
+          path: |
+            sbom.json
+            trivy.json
+            trivy-secrets.json
+            risk.json
